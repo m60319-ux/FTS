@@ -1,1 +1,131 @@
+"""Simple serial-port test + decoder for the M4313SFA9A force-torque sensor.
 
+Connects to the serial port, reads raw bytes, extracts sensor frames, and
+prints the decoded force/torque values (Fx Fy Fz in N, Mx My Mz in Nm).
+
+Frame format (see M4313SFA9A_helper.py):
+    2-byte header 0xAA 0x55 | 11-byte bit-packed payload | 1-byte CRC-8
+    = 14 bytes total. Payload holds 6 sign-magnitude values scaled by 0.1.
+
+Usage:
+    python serial_read_test.py          # uses COM10 / /dev/ttyACM0
+    python serial_read_test.py COM7     # test a different port
+    python serial_read_test.py COM7 --raw   # also print raw hex per frame
+"""
+
+import sys
+
+import serial
+
+# Serial settings must match the real sensor (see M4313SFA9A_helper.py).
+# Default port mirrors the project's resolve_serial_port(): serial index "10"
+# -> COM10 on Windows, /dev/ttyACM10 on Linux. Override by passing a full
+# port name / device path as the first argument.
+DEFAULT_PORT = "/dev/ttyACM0" if sys.platform.startswith("linux") else "COM10"
+
+args = [a for a in sys.argv[1:] if a != "--raw"]
+SHOW_RAW = "--raw" in sys.argv
+PORT = args[0] if args else DEFAULT_PORT
+BAUDRATE = 460800
+
+FRAME_HEADER = b"\xAA\x55"
+FRAME_LEN = 14  # header(2) + payload(11) + crc(1)
+
+
+def crc8(data):
+    """CRC-8/MAXIM (reflected poly 0x8C, init 0x00) over the payload bytes."""
+    crc = 0
+    for byte in data:
+        crc ^= byte
+        for _ in range(8):
+            crc = ((crc >> 1) ^ 0x8C) if (crc & 1) else (crc >> 1)
+    return crc & 0xFF
+
+
+def decode_frame(f):
+    """Decode a 14-byte frame into (Fx, Fy, Fz, Mx, My, Mz).
+
+    Forces in N, torques in Nm. Bit layout mirrors _decode_frame_from_buffer
+    in M4313SFA9A_helper.py.
+    """
+    b2, b3, b4, b5, b6, b7, b8, b9, b10, b11, b12 = f[2:13]
+
+    fx = (b2 << 9) | (b3 << 1) | ((b4 & 0x80) >> 7)
+    fy = ((b4 & 0x7F) << 10) | (b5 << 2) | ((b6 & 0xC0) >> 6)
+    fz = ((b6 & 0x3F) << 11) | (b7 << 3) | ((b8 & 0xE0) >> 5)
+    mx = ((b8 & 0x1F) << 7) | ((b9 & 0xFE) >> 1)
+    my = ((b9 & 0x01) << 11) | (b10 << 3) | ((b11 & 0xE0) >> 5)
+    mz = ((b11 & 0x1F) << 7) | ((b12 & 0xFE) >> 1)
+
+    # Sign-magnitude decode (16-bit forces, 11-bit torques).
+    fx = -(fx & 0xFFFF) if (fx >> 16) else (fx & 0xFFFF)
+    fy = -(fy & 0xFFFF) if (fy >> 16) else (fy & 0xFFFF)
+    fz = -(fz & 0xFFFF) if (fz >> 16) else (fz & 0xFFFF)
+    mx = -(mx & 0x7FF) if (mx >> 11) else (mx & 0x7FF)
+    my = -(my & 0x7FF) if (my >> 11) else (my & 0x7FF)
+    mz = -(mz & 0x7FF) if (mz >> 11) else (mz & 0x7FF)
+
+    return (fx * 0.1, fy * 0.1, fz * 0.1, mx * 0.1, my * 0.1, mz * 0.1)
+
+
+try:
+    ser = serial.Serial(
+        port=PORT,
+        baudrate=BAUDRATE,
+        bytesize=serial.EIGHTBITS,
+        parity=serial.PARITY_EVEN,
+        stopbits=serial.STOPBITS_ONE,
+        timeout=1,
+    )
+except serial.SerialException as e:
+    print("Could not open {}: {}".format(PORT, e))
+    sys.exit(1)
+
+print("Opened {} @ {} 8E1 - reading (Ctrl+C to stop)...".format(PORT, BAUDRATE))
+
+buffer = bytearray()
+frames = 0
+crc_errors = 0
+
+try:
+    while True:
+        chunk = ser.read(ser.in_waiting or 1)
+        if chunk:
+            buffer.extend(chunk)
+
+        # Extract every complete, valid frame currently in the buffer.
+        while True:
+            start = buffer.find(FRAME_HEADER)
+            if start < 0:
+                # No header: drop everything, but keep a trailing 0xAA that
+                # might be the first byte of the next header.
+                keep = 1 if buffer and buffer[-1] == 0xAA else 0
+                if keep:
+                    del buffer[:-1]
+                else:
+                    buffer.clear()
+                break
+
+            if start + FRAME_LEN > len(buffer):
+                del buffer[:start]  # incomplete frame: wait for more bytes
+                break
+
+            frame = buffer[start:start + FRAME_LEN]
+            if crc8(frame[2:13]) != frame[13]:
+                crc_errors += 1
+                del buffer[:start + 1]  # bad CRC: skip this header, resync
+                continue
+
+            fx, fy, fz, mx, my, mz = decode_frame(frame)
+            frames += 1
+            line = ("Fx={:8.2f} Fy={:8.2f} Fz={:8.2f} N | "
+                    "Mx={:7.2f} My={:7.2f} Mz={:7.2f} Nm").format(fx, fy, fz, mx, my, mz)
+            if SHOW_RAW:
+                line = " ".join("{:02X}".format(b) for b in frame) + "  ->  " + line
+            print(line)
+
+            del buffer[:start + FRAME_LEN]
+except KeyboardInterrupt:
+    print("\nStopped. frames={} crc_errors={}".format(frames, crc_errors))
+finally:
+    ser.close()
