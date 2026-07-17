@@ -1,1 +1,65 @@
-
+{
+  "param": {
+    "serial_port": "10",
+    "auto_zero_seconds": 1.0,
+    "io_num": 0
+  },
+  "control": {
+    "control_space": false,
+    "orientation_control": true
+  },
+  "sensor_offset": {
+    "sensor_x": 0.0,
+    "sensor_y": 0.0,
+    "sensor_z": 0.15,
+    "sensor_a": 0.0,
+    "sensor_b": 0.0,
+    "sensor_c": 0.0
+  },
+  "force_to_velocity": {
+    "max_linear_vel": 0.05,
+    "max_angular_vel": 0.05,
+    "dead_zone_force": 3.5,
+    "dead_zone_torque": 0.8,
+    "gain_force": 0.01,
+    "gain_torque": 0.1
+  },
+  "payload": {
+    "enabled": true,
+    "profile_tool": {
+      "mass_kg": 0.0,
+      "com_x": 0.0,
+      "com_y": 0.0,
+      "com_z": 0.0,
+      "identified_on": "",
+      "residual_force_rms": 0.0,
+      "residual_torque_rms": 0.0
+    },
+    "profile_tool_load": {
+      "mass_kg": 0.0,
+      "com_x": 0.0,
+      "com_y": 0.0,
+      "com_z": 0.0,
+      "identified_on": "",
+      "residual_force_rms": 0.0,
+      "residual_torque_rms": 0.0
+    },
+    "active_profile": "tool",
+    "switch_io": -1,
+    "gravity_x": 0.0,
+    "gravity_y": 0.0,
+    "gravity_z": -9.80665,
+    "startup_max_residual_force": 1.0,
+    "startup_max_residual_torque": 0.3,
+    "max_operator_force": 80.0,
+    "max_operator_torque": 20.0,
+    "max_accel_linear": 0.25,
+    "max_accel_angular": 0.5,
+    "decel_multiplier": 4.0,
+    "inertial_feedforward": false
+  },
+  "wrench_filter": {
+    "filter_type": "butter2",
+    "cutoff_hz": 10.0
+  }
+}
